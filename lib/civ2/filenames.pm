@@ -59,7 +59,7 @@ sub choose_savegame_dir($) {
 }
 
 sub select_option($@) {
-	my ($message, $prompt, @options) = @_;
+	my ($message, @options) = @_;
 	
 	my $numdigits = ceil(log(scalar(@options) + 1) / log(10));
 	
