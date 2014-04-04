@@ -3,11 +3,11 @@ $| = 1;
 use strict;
 use warnings;
 use Cwd;
-use POSIX qw(ceil);
-use Win32::File;
+use File::Basename;
 
 use lib "../lib";
 use civ2;
+use civ2::filenames;
 
 sub main(@);
 
@@ -24,26 +24,7 @@ sub main(@) {
 			$monitor_directory = $saves_dir . '/' . $monitor_directory;
 		}
 	} else {
-		opendir(SAVES_DIR, $saves_dir) or die "Couldn't opendir '$saves_dir': $!";
-		my $dirid = 0;
-		my %save_dirs = map { ++$dirid => $_ } sort{ $a cmp $b } grep { !/^\./ and -d "$saves_dir/$_" } readdir(SAVES_DIR);
-		closedir(SAVES_DIR);
-		
-		my $numdigits = ceil(log($dirid + 1) / log(10));
-		print "dirid: $dirid; numdigits: $numdigits\n";
-		my $chosen_dirid;
-		
-		do {
-			print "Please select a save directory to monitor:\n";
-			foreach my $this_dirid (sort({$a <=> $b} (keys(%save_dirs)))) {
-				printf(" %${numdigits}u : %s\n", $this_dirid, $save_dirs{$this_dirid});
-			}
-			print "Number: ";
-			$chosen_dirid = <STDIN>;
-			chomp($chosen_dirid);
-		} while (!defined($chosen_dirid) or $chosen_dirid !~ /^\d+$/ or !defined($save_dirs{$chosen_dirid}));
-		
-		$monitor_directory = $saves_dir . '/' . $save_dirs{$chosen_dirid};
+		$monitor_directory = choose_savegame_dir($saves_dir);
 	}
 	
 	if(! -d $monitor_directory) {
@@ -53,21 +34,39 @@ sub main(@) {
 	print "Monitoring for autosave files in $monitor_directory...\n";
 	
 	while(1) {
-		my @autosave_files = get_sorted_autosave_files($monitor_directory);
+		my @autosave_files = get_sorted_autosavefilepaths_indir($monitor_directory);
 		
-		foreach my $filename (@autosave_files) {
-			my $turn_number = get_savegame_turn_number($filename);
-			my $difficulty = get_savegame_difficulty($filename);
-			my $year = intyear_to_adbc(turnno_to_intyear($difficulty, $turn_number));
-			my $new_filename;
-			my $counter = 0;
-			do {
-				$counter++;
-				$new_filename = $monitor_directory . '/' . sprintf("turn%04d_%s_%03d.sav", $turn_number, $year, $counter);
-			} while(-e $new_filename);
-			print "Moving $filename to $new_filename\n";
-			rename($filename, $new_filename);
-			make_file_readonly($new_filename);
+		if(@autosave_files) {
+			my $turnno_highestversionno = get_highest_versionno_per_turnno_indir($monitor_directory);
+			foreach my $this_filepath (@autosave_files) {
+				my $this_filename = fileparse($this_filepath);
+				
+				my $settings = read_savegame_settings($this_filepath);
+				my $year = turnno_to_year($settings->{turn_number}, $settings->{difficulty});
+				
+				my $suffix = (
+					$settings->{cheat_penalty} ?
+					'_cheatsenabled' :
+					''
+				);
+				
+				my $versionno = (
+					defined($turnno_highestversionno->{ $settings->{turn_number} }) ? 
+					$turnno_highestversionno->{ $settings->{turn_number} } + 1 : 
+					1
+				);
+				
+				my $new_filename = format_filename($settings->{turn_number}, $year, $versionno, $suffix);
+				my $new_filepath = $monitor_directory . '/' . $new_filename;
+				
+				if(-e $new_filepath) {
+					die "Script failure. Tried to move '$this_filepath' to '$new_filepath', but the latter already exists.";
+				}
+				print "Moving $this_filename to $new_filename\n";
+				rename($this_filepath, $new_filepath);
+				make_file_readonly($new_filepath);
+				$turnno_highestversionno->{ $settings->{turn_number} } = $versionno;
+			}
 		}
 		
 		sleep(1);
@@ -75,6 +74,7 @@ sub main(@) {
 	
 	return 0;
 }
+
 
 
 

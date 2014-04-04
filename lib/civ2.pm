@@ -1,44 +1,43 @@
 package civ2;
 
+
 # Dependencies
 use strict;
 use warnings;
 use base 'Exporter';
-use LWP::UserAgent;
 use Fcntl qw(:seek);
 use File::chmod;
 use Time::localtime;
+use Win32::File;
+use POSIX qw(floor);
+use civ2::filenames;
+
 
 # Subroutine declarations
 sub read_file_hexdata_at_offset($$$);
 sub get_savegame_difficulty($);
 sub get_savegame_turn_number($);
-sub get_sorted_autosave_files($);
-sub get_savegamefiles_indir($);
-sub get_autosavefiles_indir($);
-sub sort_files_by_moddate_asc(@);
+sub read_savegame_settings($);
 sub adbc_to_intyear($);
 sub intyear_to_adbc($);
 sub intyear_to_turnno($$);
 sub turnno_to_intyear($$);
+sub turnno_to_year($$);
+sub year_to_turnno($$);
 sub make_file_readonly($);
 
+
 # Module info
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 our @EXPORT = qw(
-	read_file_hexdata_at_offset
-	get_savegame_difficulty
-	get_savegame_turn_number
-	get_sorted_autosave_files
-	get_savegamefiles_indir
-	get_autosavefiles_indir
+	read_savegame_settings
 	make_file_readonly
-	sort_files_by_moddate_asc
-	adbc_to_intyear
-	intyear_to_adbc
-	intyear_to_turnno
-	turnno_to_intyear
+	turnno_to_year
+	year_to_turnno
 );
+our @EXPORT_OK = qw();
+our %EXPORT_TAGS = qw();
+
 
 # Global data
 use constant {
@@ -50,7 +49,25 @@ use constant {
 	DIFFICULTY_DEITY		=> 'Deity',
 };
 
+our @difficulties_asc = (
+	DIFFICULTY_CHIEFTAIN,
+	DIFFICULTY_WARLORD,
+	DIFFICULTY_PRINCE,
+	DIFFICULTY_KING,
+	DIFFICULTY_EMPEROR,
+	DIFFICULTY_DEITY
+);
+
 our $difficulty_adbc_yearsperturn = {
+	&DIFFICULTY_PRINCE	=> {
+		'4000BC' 	=> 20,
+		'1AD'		=> 19,
+		'20AD'		=> 20,
+		'1000AD'	=> 10,
+		'1500AD'	=> 5,
+		'1750AD'	=> 2,
+		'1850AD'	=> 1,
+	},
 	&DIFFICULTY_KING	=> {
 		'4000BC' 	=> 50,
 		'1000BC' 	=> 25,
@@ -80,30 +97,19 @@ foreach my $difficulty (keys(%{$difficulty_adbc_yearsperturn})) {
 	}
 }
 
+# Validation check:
+foreach my $test_difficulty (keys(%{ $difficulty_intyear_yearsperturn })) {
+	for(my $testturn = 1; $testturn < 1000; $testturn++) {
+		my $testyear = turnno_to_year($testturn, $test_difficulty);
+		my $testturnback = year_to_turnno($testyear, $test_difficulty);
+		if($testturn != $testturnback) {
+			die "Error for turn '$testturn': $testyear, $testturnback, $test_difficulty";
+		}
+	}
+}
+
+
 # Subroutines
-
-sub get_savegame_difficulty($) {
-	my ($filename) = @_;
-	
-	my $difficulty_num = ord(read_file_hexdata_at_offset($filename, 44, 1));
-	
-	defined($difficulty_num) or die "No difficulty num";
-	
-	if($difficulty_num == 0) { return DIFFICULTY_CHIEFTAIN; }
-	if($difficulty_num == 1) { return DIFFICULTY_WARLORD; }
-	if($difficulty_num == 2) { return DIFFICULTY_PRINCE; }
-	if($difficulty_num == 3) { return DIFFICULTY_KING; }
-	if($difficulty_num == 4) { return DIFFICULTY_EMPEROR; }
-	if($difficulty_num == 5) { return DIFFICULTY_DEITY; }
-	
-	die "Unknown difficulty number: '$difficulty_num'";
-}
-
-sub get_savegame_turn_number($) {
-	my ($filename) = @_;
-	
-	return unpack("S", read_file_hexdata_at_offset($filename, 28, 2) );
-}
 
 sub read_file_hexdata_at_offset($$$) {
 	my ($filename, $byte_position, $length) = @_;
@@ -158,7 +164,7 @@ sub intyear_to_adbc($) {
 }
 
 sub intyear_to_turnno($$) {
-	my ($difficulty, $intyear) = @_;
+	my ($intyear, $difficulty) = @_;
 	
 	if(!defined($difficulty_intyear_yearsperturn->{ $difficulty })) {
 		die "No turn length data for difficulty '$difficulty'";
@@ -193,11 +199,11 @@ sub intyear_to_turnno($$) {
 		$turnno += ($intyear - $prev_boundary) / $prev_yearsperturn;
 	}
 	
-	return $turnno;
+	return floor($turnno);
 }
 
 sub turnno_to_intyear($$) {
-	my ($difficulty, $turnno) = @_;
+	my ($turnno, $difficulty) = @_;
 	
 	if(!defined($difficulty_intyear_yearsperturn->{ $difficulty })) {
 		die "No turn length data for difficulty '$difficulty'";
@@ -228,36 +234,64 @@ sub turnno_to_intyear($$) {
 	return $prev_boundary + ($turnsleft * $prev_yearsperturn);
 }
 
-sub get_sorted_autosave_files($) {
-    my $path = shift;
-	return sort_files_by_moddate_asc(get_autosavefiles_indir($path));
+sub turnno_to_year($$) {
+	my ($turnno, $difficulty) = @_;
+	return intyear_to_adbc(turnno_to_intyear($turnno, $difficulty));
+}
+
+sub year_to_turnno($$) {
+	my ($year, $difficulty) = @_;
+	return intyear_to_turnno(adbc_to_intyear($year), $difficulty);
+}
+
+sub read_savegame_settings($) {
+	my ($filepath) = @_;
+	my $settings = {};
+	
+	{
+		my $byte15 = ord(read_file_hexdata_at_offset($filepath, 15, 1));
+	
+		$settings->{cheat_menu} 					= ($byte15 & 128 ? 1 : 0);
+		$settings->{always_wait_at_end_of_turn} 	= ($byte15 & 64 ? 1 : 0);
+		$settings->{autosave_each_turn} 			= ($byte15 & 32 ? 1 : 0);
+		$settings->{show_enemy_moves} 				= ($byte15 & 16 ? 1 : 0);
+		$settings->{no_pause_after_enemy_moves} 	= ($byte15 & 8 ? 1 : 0);
+		$settings->{fast_piece_slide} 				= ($byte15 & 4 ? 1 : 0);
+		$settings->{instant_advice} 				= ($byte15 & 2 ? 1 : 0);
+		$settings->{tutorial_help} 					= ($byte15 & 1 ? 1 : 0);
+	}
+	
+	{
+		my $byte20 = ord(read_file_hexdata_at_offset($filepath, 20, 1));
+	
+		$settings->{scenario_flag}					= ($byte20 & 128 ? 1 : 0);
+		$settings->{scenario_file}				 	= ($byte20 & 64 ? 1 : 0);
+		$settings->{byte20_32}						= ($byte20 & 32 ? 1 : 0);
+		$settings->{cheat_penalty}		 			= ($byte20 & 16 ? 1 : 0);
+		$settings->{byte20_8} 						= ($byte20 & 8 ? 1 : 0);
+		$settings->{byte20_4} 						= ($byte20 & 4 ? 1 : 0);
+		$settings->{byte20_2} 						= ($byte20 & 2 ? 1 : 0);
+		$settings->{byte20_1} 						= ($byte20 & 1 ? 1 : 0);
+	}
+	
+	$settings->{turn_number} = unpack("S", read_file_hexdata_at_offset($filepath, 28, 2) );
+	defined($settings->{turn_number}) or die "No turn number";
+	
+	{
+		my $byte44 = ord(read_file_hexdata_at_offset($filepath, 44, 1));
+		
+		defined($byte44) or die "No difficulty num";
+		if($byte44 == 0) { $settings->{difficulty} = DIFFICULTY_CHIEFTAIN; }
+		elsif($byte44 == 1) { $settings->{difficulty} = DIFFICULTY_WARLORD; }
+		elsif($byte44 == 2) { $settings->{difficulty} = DIFFICULTY_PRINCE; }
+		elsif($byte44 == 3) { $settings->{difficulty} = DIFFICULTY_KING; }
+		elsif($byte44 == 4) { $settings->{difficulty} = DIFFICULTY_EMPEROR; }
+		elsif($byte44 == 5) { $settings->{difficulty} = DIFFICULTY_DEITY; }
+		else { die "Uknown difficulty: '$byte44'"; }
+	}
 	
 	
-    opendir my($dir), $path or die "can't opendir $path: $!";
-    my %hash = map {$_ => (stat($path . '/' . $_))[9]}
-               grep { /\.sav$/i and !/^\./ }
-               readdir $dir;
-    closedir $dir;
-	return sort( { $hash{$a} <=> $hash{$b} } keys(%hash) );
-}
-
-sub get_savegamefiles_indir($) {
-    my ($dirpath) = @_;
-    opendir(my($dir), $dirpath) or die "can't opendir '$dirpath': $!";
-    my @savegame_files = map {$dirpath . '/' . $_} grep { /\.sav$/i and !/^\./ } readdir $dir;
-    closedir ($dir);
-	return @savegame_files;
-}
-
-sub get_autosavefiles_indir($) {
-    my ($dirpath) = @_;
-	return grep { /_auto\.sav$/i } get_savegamefiles_indir($dirpath);
-}
-
-sub sort_files_by_moddate_asc(@) {
-	my @filepaths = @_;
-	my %filepaths_hash = map {$_ => (stat($_))[9]} @filepaths;
-	return sort( { $filepaths_hash{$a} <=> $filepaths_hash{$b} } keys(%filepaths_hash) );
+	return $settings;
 }
 
 sub make_file_readonly($) {
