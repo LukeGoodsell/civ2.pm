@@ -37,19 +37,20 @@ sub main(@) {
 		# Exclude already-formatted filenames:
 		!parse_formatted_filepath($this_filepath) or next;
 		
-		my $this_filename = fileparse($this_filepath);
+		my ($this_basename, $parentdir, $extension) = fileparse($this_filepath, qr/\.[^.]*$/);
+		my $this_filename = $this_basename . $extension;
 		
 		# Try to identify useful info as a suffix
 		my $suffix;
 		if(my $autosave_filepath_parsedata = parse_autosave_filepath($this_filename)) {
 			# The file is an autosave filepath. There is not useful info to be obtained
-		} elsif($this_filename =~ /^[a-z]{2}_(a|b)[\d]+([^\d].*)?\.sav$/) {
+		} elsif(my $default_filepath_parsedata = parse_default_filepath($this_filename)) {
 			# The default savegame filename, possibly with a suffix
 			# eg: ma_a980.sav ma_a980b.sav ma_a980_asdf.sav
-			$suffix = $2;
-		} elsif($this_filename =~ /^(.+)\.sav$/) {
+			$suffix = $default_filepath_parsedata->{suffix};
+		} else {
 			# Any other filename
-			$suffix = $2;
+			$suffix = $this_basename;
 		}
 		
 		if(defined($suffix) and length($suffix) > 0) {

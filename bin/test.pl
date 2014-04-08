@@ -2,40 +2,34 @@
 $| = 1;
 use strict;
 use warnings;
+use File::Basename;
 use lib "../lib";
 use civ2;
 use civ2::filenames;
 use civ2::debug;
 
 
+my @test_paths = (
+	'/foo/bar/fish.wibble',
+	'/foo/bar/fish.',
+	'/foo/bar/fish',
+	'/foo/bar/fish.asdf.d',
+	'/foo/bar/fish.wibble.',
+	'/fish.wibble',
+	'fish.wibble',
+);
 
+foreach my $this_path (@test_paths) {
+	print "Current path: $this_path\n";
+	my ($this_basename, $parentdir, $extension) = fileparse($this_path, qr/\.[^.]*$/);
+	my $this_filename = $this_basename . $extension;
 
-my $dir = 'E:\Program Files\Civilization 2\Saves\temp';
-
-
-my $turnno_highestversionno = get_highest_versionno_per_turnno_indir($dir);
-my $turnno_versions = get_existing_savegame_numbers_indir($dir);
-
-printvar('turnno_versions', $turnno_versions);
-printvar('turnno_highestversionno', $turnno_highestversionno);
-
-my $autosave_filepath = 'Ma_Auto.SAV';
-my $nonautosave_filepath = 'ma_a1790.sav';
-#my $parsed_autosave_filepath = parse_autosave_filepath($autosave_filepath);
-#printvar('$parsed_autosave_filepath', $parsed_autosave_filepath);
-
-if(my $test = parse_autosave_filepath($autosave_filepath)){
-	printvar('$test', $test);
-} else {
-	print "\$test is not an autosave filepath\n";
+	foreach my $var (qw/$parentdir $this_filename $this_basename $extension/) {
+		print "$var = '" . eval($var) . "'\n";
+	}
+	
+	print "\n\n";
 }
-
-if(my $test2 = parse_autosave_filepath($nonautosave_filepath)){
-	printvar('$test2', $test2);
-} else {
-	print "\$test2 is not an autosave filepath\n";
-}
-
 
 
 __END__

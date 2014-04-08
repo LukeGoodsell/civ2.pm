@@ -281,7 +281,7 @@ sub read_savegame_settings($) {
 		my $byte44 = ord(read_file_hexdata_at_offset($filepath, 44, 1));
 		
 		defined($byte44) or die "No difficulty num";
-		if($byte44 == 0) { $settings->{difficulty} = DIFFICULTY_CHIEFTAIN; }
+		   if($byte44 == 0) { $settings->{difficulty} = DIFFICULTY_CHIEFTAIN; }
 		elsif($byte44 == 1) { $settings->{difficulty} = DIFFICULTY_WARLORD; }
 		elsif($byte44 == 2) { $settings->{difficulty} = DIFFICULTY_PRINCE; }
 		elsif($byte44 == 3) { $settings->{difficulty} = DIFFICULTY_KING; }

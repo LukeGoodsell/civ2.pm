@@ -8,10 +8,15 @@ use base 'Exporter';
 use File::Basename;
 use Sort::Naturally;
 use POSIX qw(ceil);
+use constant {
+	TRUE	=> 1,
+	FALSE	=> 0,
+};
 
 
 # Subroutine declarations
 sub choose_savegame_dir($);
+sub choose_savegame_subdir($$);
 sub select_option($@);
 sub get_existing_savegame_numbers_indir($);
 sub get_highest_versionno_per_turnno_indir($);
@@ -20,8 +25,10 @@ sub get_sorted_savegamefilepaths_indir($);
 sub get_autosavefilepaths_indir($);
 sub get_sorted_autosavefilepaths_indir($);
 sub format_filename($$$$);
+sub parse_default_filepath($);
 sub parse_autosave_filepath($);
 sub parse_formatted_filepath($);
+sub parse_path($);
 
 
 # Module info
@@ -36,6 +43,7 @@ our @EXPORT = qw(
 	get_autosavefilepaths_indir
 	get_sorted_autosavefilepaths_indir
 	format_filename
+	parse_default_filepath
 	parse_autosave_filepath
 	parse_formatted_filepath
 	sortby_filemoddate
@@ -49,13 +57,31 @@ our %EXPORT_TAGS = qw();
 sub choose_savegame_dir($) {
 	my ($saves_dir) = @_;
 	
-	opendir(SAVES_DIR, $saves_dir) or die "Couldn't opendir '$saves_dir': $!";
-	my @save_dirs = nsort grep { !/^\./ and -d "$saves_dir/$_" } readdir(SAVES_DIR);
-	closedir(SAVES_DIR);
+	return choose_savegame_subdir($saves_dir, FALSE);
+}
+
+sub choose_savegame_subdir($$) {
+	my ($parent_dir, $include_current) = @_;
+	opendir(DIR, $parent_dir) or die "Couldn't opendir '$parent_dir': $!";
+	my @subdirs = nsort grep { !/^\./ and -d "$parent_dir/$_" } readdir(DIR);
+	closedir(DIR);
 	
-	my $selected_dir = select_option('Please select a save directory to monitor', @save_dirs);
+	my $thisdir_string = './ (this directory)';
 	
-	return $saves_dir . '/' . $selected_dir;
+	if(@subdirs) {
+		if($include_current) {
+			unshift(@subdirs, $thisdir_string);
+		}
+		my $selected_dir = select_option("In $parent_dir\nPlease select a save directory to monitor", @subdirs);
+		
+		if($selected_dir eq $thisdir_string) {
+			return $parent_dir;
+		} else {
+			return choose_savegame_subdir($parent_dir . '/' . $selected_dir, TRUE);
+		}
+	} else {
+		return $parent_dir;
+	}
 }
 
 sub select_option($@) {
@@ -133,6 +159,21 @@ sub get_sorted_autosavefilepaths_indir($) {
 	return sort( sortby_filemoddate get_autosavefilepaths_indir($path) );
 }
 
+sub parse_default_filepath($) {
+	my ($path) = @_;
+	my $filename = fileparse($path);
+
+	if($filename =~ /^[a-z]{2}_(a|b)[\d]+([^\d].*)?\.sav$/i) {
+		return {
+			leader => $1,
+			year => $2,
+			suffix	=> $3,
+		};
+	} else {
+		return;
+	}
+}
+
 sub parse_autosave_filepath($) {
 	my ($path) = @_;
 	my $filename = fileparse($path);
@@ -174,8 +215,7 @@ sub parse_formatted_filepath($) {
 		my ($cheats_enabled);
 		my $unparsed_suffix = $raw_suffix;
 		if($unparsed_suffix) {
-			if($unparsed_suffix =~ /_cheatsenabled/) {
-				$unparsed_suffix =~ s/_cheatsenabled//gi;
+			if($unparsed_suffix =~ s/_cheatsenabled//gi) {
 				$cheats_enabled = 1;
 			}
 		}
@@ -196,10 +236,21 @@ sub parse_formatted_filepath($) {
 }
 
 sub sortby_filemoddate {
+	defined($a) or die '$a is not defined';
+	defined($b) or die '$b is not defined';
 	-f $a or die "'$a' is not a file";
 	-f $b or die "'$b' is not a file";
 	
 	return (stat($a))[9] <=> (stat($b))[9];
+}
+
+sub parse_path($) {
+	my ($path) = @_;
+	
+	my ($basename, $parentdir, $extension) = fileparse($path, qr/\.[^.]*$/);
+	my $filename = $basename . $extension;
+
+	return ($parentdir, $filename, $basename, $extension);
 }
 
 1;
